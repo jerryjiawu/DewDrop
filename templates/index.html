@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DewDrop Weather Station</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <div class="status-indicator" id="statusIndicator"></div>
+    <div class="weather-animation" id="weatherAnimation"></div>
+
+    <div class="container">
+        <div class="header">
+            <h1>🌦️ DewDrop Weather Station</h1>
+            <p>Real-time LoRa Weather Monitoring & Forecasting</p>
+        </div>
+
+        <div class="main-grid">
+            <div class="card current-weather">
+                <div class="weather-icon" id="weatherIcon">🌤️</div>
+                <div class="temperature" id="temperature">--°C</div>
+                <div class="condition" id="condition">Loading...</div>
+                
+                <div class="sensor-grid">
+                    <div class="sensor-item">
+                        <div class="sensor-value" id="pressureValue">----</div>
+                        <div class="sensor-label">Pressure (hPa)</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-value" id="moistureValue">----</div>
+                        <div class="sensor-label">Soil Moisture</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-value" id="rssiValue">----</div>
+                        <div class="sensor-label">Signal (RSSI)</div>
+                    </div>
+                    <div class="sensor-item">
+                        <div class="sensor-value" id="snrValue">----</div>
+                        <div class="sensor-label">SNR (dB)</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>📊 Real-time Sensor Data</h2>
+            <div id="sensorChart" style="height: 400px;"></div>
+        </div>
+
+        <div class="forecast-container">
+            <h2>🔮 6-Hour Weather Forecast</h2>
+            <div class="forecast-grid" id="forecastGrid">
+                <!-- Forecast items will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        // Weather icons mapping
+        const weatherIcons = {
+            'Clear': '☀️',
+            'Hot and Clear': '🌞',
+            'Partly Cloudy': '⛅',
+            'Cloudy': '☁️',
+            'Rainy': '🌧️',
+            'Stormy': '⛈️',
+            'Cold': '❄️',
+            'Humid': '💨',
+            'Unknown': '🌤️'
+        };
+
+        // Initialize chart with minimalistic design
+        function initChart() {
+            const trace1 = {
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Temperature (°C)',
+                line: { color: '#3498db', width: 2 },
+                marker: { size: 4 }
+            };
+
+            const trace2 = {
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Pressure (hPa)',
+                yaxis: 'y2',
+                line: { color: '#2ecc71', width: 2 },
+                marker: { size: 4 }
+            };
+
+            const trace3 = {
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Moisture',
+                yaxis: 'y3',
+                line: { color: '#e67e22', width: 2 },
+                marker: { size: 4 }
+            };
+
+            const layout = {
+                title: {
+                    text: 'Live Sensor Readings',
+                    font: { color: '#ecf0f1', size: 16, family: '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif' }
+                },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#bdc3c7', family: '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif' },
+                xaxis: {
+                    title: 'Time',
+                    gridcolor: 'rgba(255,255,255,0.1)',
+                    showgrid: true,
+                    zeroline: false
+                },
+                yaxis: {
+                    title: 'Temperature (°C)',
+                    titlefont: { color: '#3498db' },
+                    tickfont: { color: '#3498db' },
+                    gridcolor: 'rgba(255,255,255,0.1)',
+                    zeroline: false
+                },
+                yaxis2: {
+                    title: 'Pressure (hPa)',
+                    titlefont: { color: '#2ecc71' },
+                    tickfont: { color: '#2ecc71' },
+                    overlaying: 'y',
+                    side: 'right',
+                    position: 0.95
+                },
+                yaxis3: {
+                    title: 'Moisture',
+                    titlefont: { color: '#e67e22' },
+                    tickfont: { color: '#e67e22' },
+                    overlaying: 'y',
+                    side: 'right',
+                    position: 1
+                },
+                legend: {
+                    x: 0,
+                    y: 1,
+                    bgcolor: 'rgba(255,255,255,0.05)',
+                    bordercolor: 'rgba(255,255,255,0.1)',
+                    borderwidth: 1
+                },
+                margin: { t: 50, b: 50, l: 60, r: 100 }
+            };
+
+            Plotly.newPlot('sensorChart', [trace1, trace2, trace3], layout, {
+                responsive: true,
+                displayModeBar: false
+            });
+        }
+
+        // Update chart with new data
+        function updateChart(data) {
+            const update = {
+                x: [data.timestamps, data.timestamps, data.timestamps],
+                y: [data.temperature, data.pressure, data.moisture]
+            };
+            Plotly.restyle('sensorChart', update);
+        }
+
+        // Update weather animation based on condition
+        function updateWeatherAnimation(condition) {
+            const container = document.getElementById('weatherAnimation');
+            container.innerHTML = '';
+
+            if (condition.includes('Rainy') || condition.includes('Stormy')) {
+                createRainAnimation(container);
+            } else if (condition.includes('Cold')) {
+                createSnowAnimation(container);
+            }
+        }
+
+        // Create minimalistic rain animation
+        function createRainAnimation(container) {
+            for (let i = 0; i < 30; i++) {
+                const drop = document.createElement('div');
+                drop.className = 'raindrop';
+                drop.style.left = Math.random() * 100 + '%';
+                drop.style.animationDelay = Math.random() * 1.5 + 's';
+                drop.style.animationDuration = (Math.random() * 0.3 + 0.8) + 's';
+                container.appendChild(drop);
+            }
+        }
+
+        // Create minimalistic snow animation
+        function createSnowAnimation(container) {
+            for (let i = 0; i < 20; i++) {
+                const flake = document.createElement('div');
+                flake.className = 'snowflake';
+                flake.innerHTML = '❄';
+                flake.style.left = Math.random() * 100 + '%';
+                flake.style.animationDelay = Math.random() * 4 + 's';
+                flake.style.animationDuration = (Math.random() * 2 + 4) + 's';
+                container.appendChild(flake);
+            }
+        }
+
+        // Update forecast display
+        function updateForecast(forecast) {
+            const grid = document.getElementById('forecastGrid');
+            grid.innerHTML = '';
+
+            forecast.forEach(item => {
+                const forecastItem = document.createElement('div');
+                forecastItem.className = 'forecast-item';
+                
+                const icon = weatherIcons[item.condition] || '🌤️';
+                
+                forecastItem.innerHTML = `
+                    <div class="forecast-time">${item.time}</div>
+                    <div style="font-size: 1.8rem; margin: 12px 0;">${icon}</div>
+                    <div class="forecast-temp">${item.temperature}°C</div>
+                    <div class="forecast-condition">${item.condition}</div>
+                `;
+                
+                grid.appendChild(forecastItem);
+            });
+        }
+
+        // Socket event handlers
+        socket.on('connect', function() {
+            console.log('Connected to server');
+            document.getElementById('statusIndicator').classList.remove('disconnected');
+        });
+
+        socket.on('disconnect', function() {
+            console.log('Disconnected from server');
+            document.getElementById('statusIndicator').classList.add('disconnected');
+        });
+
+        socket.on('sensor_update', function(data) {
+            const current = data.current;
+            const historical = data.historical;
+
+            // Update current weather display
+            document.getElementById('temperature').textContent = current.temperature.toFixed(1) + '°C';
+            document.getElementById('condition').textContent = current.weather_condition;
+            document.getElementById('pressureValue').textContent = current.pressure.toFixed(1);
+            document.getElementById('moistureValue').textContent = current.moisture;
+            document.getElementById('rssiValue').textContent = current.rssi;
+            document.getElementById('snrValue').textContent = current.snr.toFixed(1);
+
+            // Update weather icon
+            const icon = weatherIcons[current.weather_condition] || '🌤️';
+            document.getElementById('weatherIcon').textContent = icon;
+
+            // Update chart
+            updateChart(historical);
+
+            // Update forecast
+            if (current.forecast) {
+                updateForecast(current.forecast);
+            }
+
+            // Update weather animation
+            updateWeatherAnimation(current.weather_condition);
+        });
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            initChart();
+        });
+
+        // Subtle particle effects on hover (minimalistic)
+        document.addEventListener('mousemove', function(e) {
+            if (Math.random() > 0.98) {
+                const particle = document.createElement('div');
+                particle.style.position = 'fixed';
+                particle.style.left = e.clientX + 'px';
+                particle.style.top = e.clientY + 'px';
+                particle.style.width = '2px';
+                particle.style.height = '2px';
+                particle.style.backgroundColor = 'rgba(255,255,255,0.6)';
+                particle.style.borderRadius = '50%';
+                particle.style.pointerEvents = 'none';
+                particle.style.zIndex = '9999';
+                particle.style.animation = 'fadeOut 1s ease-out forwards';
+                document.body.appendChild(particle);
+
+                setTimeout(() => {
+                    if (document.body.contains(particle)) {
+                        document.body.removeChild(particle);
+                    }
+                }, 1000);
+            }
+        });
+    </script>
+</body>
+</html>
