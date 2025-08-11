@@ -4,7 +4,7 @@ DewDrop is a low-cost, solar-powered weather station designed to provide critica
 ### How to Use
 3D print the provided STL files to create the DewDrop casing. Once assembled, deploy the station in a suitable location with good solar exposure.
 
-###Running the Code
+### Running the Code
 1. Clone the repository.
    ```bash
    git clone https://github.com/jerryjiawu/DewDrop
